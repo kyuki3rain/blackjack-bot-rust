@@ -30,7 +30,7 @@ impl Player {
             if i == 0 && hide_first {
                 symbol += "XX ";
             } else {
-                symbol += &card.get_symbol();
+                symbol += &card.to_string();
                 symbol += " ";
             }
         }

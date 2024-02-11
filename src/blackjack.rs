@@ -1,6 +1,12 @@
 use std::collections::HashMap;
 
-use crate::{card::Card, deck::Deck, player::Player};
+use crate::{
+    card::Card,
+    command::{CommandResultType, CommandType},
+    deck::Deck,
+    player::Player,
+    status::Status,
+};
 
 pub struct Blackjack {
     deck: Deck,
@@ -8,14 +14,6 @@ pub struct Blackjack {
     player_map: HashMap<String, Player>,
     player_order: Vec<String>,
     status: Status,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Status {
-    Betting,
-    Playing(usize),
-    DealerTurn,
-    End,
 }
 
 impl Blackjack {
@@ -34,19 +32,52 @@ impl Blackjack {
         }
     }
 
-    pub fn add_player(&mut self, name: String) -> Result<(), String> {
+    pub fn execute(&mut self, command: CommandType) -> Result<CommandResultType, String> {
+        match command {
+            CommandType::Participate(name) => {
+                Ok(CommandResultType::Participate(self.add_player(name)?))
+            }
+            CommandType::Leave(name) => Ok(CommandResultType::Leave(self.remove_player(name)?)),
+            CommandType::Start => Ok(CommandResultType::Start(self.start()?)),
+            CommandType::Bet(name, amount) => Ok(CommandResultType::Bet(self.bet(name, amount)?)),
+            CommandType::Deal => Ok(CommandResultType::Deal(self.deal()?)),
+            CommandType::Hit(name) => Ok(CommandResultType::Hit(self.hit(name)?)),
+            CommandType::Stand(name) => Ok(CommandResultType::Stand(self.stand(name)?)),
+            CommandType::DealerHit => Ok(CommandResultType::DealerHit(self.dealer_hit()?)),
+            CommandType::GetAmounts => Ok(CommandResultType::GetAmounts(self.get_amounts())),
+            CommandType::GetStatus => Ok(CommandResultType::GetStatus(self.get_status())),
+            CommandType::GetPlayerName(index) => Ok(CommandResultType::GetPlayerName(
+                self.get_player_name(index),
+            )),
+            CommandType::GetBoard(hide_first) => {
+                Ok(CommandResultType::GetBoard(self.get_board(hide_first)))
+            }
+            CommandType::GetPlayerHand(name) => Ok(CommandResultType::GetPlayerHand(
+                self.get_player_hand(name)?,
+            )),
+            CommandType::GetDealerHand(hide_first) => Ok(CommandResultType::GetDealerHand(
+                self.get_dealer_hand(hide_first),
+            )),
+            CommandType::GetDealerScore => {
+                Ok(CommandResultType::GetDealerScore(self.get_dealer_score()))
+            }
+            CommandType::GetResult => Ok(CommandResultType::GetResult(self.get_result()?)),
+        }
+    }
+
+    pub fn add_player(&mut self, name: String) -> Result<String, String> {
         if self.status != Status::Betting {
             return Err("Game already started".to_string());
         }
 
         self.player_map
             .insert(name.to_owned(), Player::new(name.to_owned()));
-        self.player_order.push(name);
+        self.player_order.push(name.to_owned());
 
-        Ok(())
+        Ok(name)
     }
 
-    pub fn remove_player(&mut self, name: String) -> Result<(), String> {
+    pub fn remove_player(&mut self, name: String) -> Result<String, String> {
         if self.status != Status::Betting {
             return Err("Game already started".to_string());
         }
@@ -54,10 +85,20 @@ impl Blackjack {
         self.player_map.remove(&name);
         self.player_order.retain(|x| x != &name);
 
+        Ok(name)
+    }
+
+    pub fn start(&mut self) -> Result<(), String> {
+        if self.status != Status::Betting {
+            return Err("Game already started".to_string());
+        }
+
+        self.status = Status::Dealing;
+
         Ok(())
     }
 
-    pub fn bet(&mut self, name: String, amount: u32) -> Result<(), String> {
+    pub fn bet(&mut self, name: String, amount: u32) -> Result<(String, u32), String> {
         if self.status != Status::Betting {
             return Err("Game already started".to_string());
         }
@@ -66,11 +107,11 @@ impl Blackjack {
             player.bet(amount);
         }
 
-        Ok(())
+        Ok((name, amount))
     }
 
     pub fn deal(&mut self) -> Result<bool, String> {
-        if self.status != Status::Betting {
+        if self.status != Status::Dealing {
             return Err("Game already started".to_string());
         }
 
@@ -95,7 +136,7 @@ impl Blackjack {
         Ok(false)
     }
 
-    pub fn hit(&mut self, name: String) -> Result<Card, String> {
+    pub fn hit(&mut self, name: String) -> Result<(String, Card), String> {
         let player = self.player_map.get_mut(&name).expect("No User");
 
         if let Status::Playing(i) = self.status {
@@ -110,10 +151,10 @@ impl Blackjack {
 
         player.add_card(card);
 
-        Ok(card)
+        Ok((name, card))
     }
 
-    pub fn stand(&mut self, name: String) -> Result<u32, String> {
+    pub fn stand(&mut self, name: String) -> Result<(String, u32), String> {
         let player = self.player_map.get_mut(&name).expect("No User");
 
         let playing_index = if let Status::Playing(i) = self.status {
@@ -132,7 +173,7 @@ impl Blackjack {
             self.status = Status::DealerTurn;
         }
 
-        Ok(player.get_score())
+        Ok((name, player.get_score()))
     }
 
     pub fn dealer_hit(&mut self) -> Result<Option<Card>, String> {
