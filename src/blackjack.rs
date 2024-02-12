@@ -28,7 +28,7 @@ impl Blackjack {
             dealer: Player::new("Dealer".to_string()),
             player_map,
             player_order: vec![],
-            status: Status::Betting,
+            status: Status::End,
         }
     }
 
@@ -39,6 +39,8 @@ impl Blackjack {
             }
             CommandType::Leave(name) => Ok(CommandResultType::Leave(self.remove_player(name)?)),
             CommandType::Start => Ok(CommandResultType::Start(self.start()?)),
+            CommandType::Reset => Ok(CommandResultType::Reset(self.reset()?)),
+            CommandType::Finish => Ok(CommandResultType::Finish(self.finish()?)),
             CommandType::Bet(name, amount) => Ok(CommandResultType::Bet(self.bet(name, amount)?)),
             CommandType::Deal => Ok(CommandResultType::Deal(self.deal()?)),
             CommandType::Hit(name) => Ok(CommandResultType::Hit(self.hit(name)?)),
@@ -65,8 +67,35 @@ impl Blackjack {
         }
     }
 
+    pub fn reset(&mut self) -> Result<(), String> {
+        if self.status != Status::End {
+            return Err("Game already started".to_string());
+        }
+
+        self.deck = Deck::new();
+        self.deck.shuffle();
+
+        self.dealer = Player::new("Dealer".to_string());
+        self.status = Status::Betting;
+
+        for player in self.player_map.values_mut() {
+            player.reset();
+        }
+
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> Result<(), String> {
+        if self.status != Status::Betting && self.status != Status::Dealing {
+            return Err("Game already started".to_string());
+        }
+        self.status = Status::End;
+
+        Ok(())
+    }
+
     pub fn add_player(&mut self, name: String) -> Result<String, String> {
-        if self.status != Status::Betting {
+        if self.status != Status::Betting && self.status != Status::End {
             return Err("Game already started".to_string());
         }
 
@@ -78,7 +107,7 @@ impl Blackjack {
     }
 
     pub fn remove_player(&mut self, name: String) -> Result<String, String> {
-        if self.status != Status::Betting {
+        if self.status != Status::Betting && self.status != Status::End {
             return Err("Game already started".to_string());
         }
 
@@ -223,9 +252,9 @@ impl Blackjack {
         board
     }
 
-    pub fn get_player_hand(&self, name: String) -> Result<String, String> {
+    pub fn get_player_hand(&self, name: String) -> Result<(String, u32), String> {
         if let Some(player) = self.player_map.get(&name) {
-            Ok(player.get_hands_symbol(false))
+            Ok((player.get_hands_symbol(false), player.get_score()))
         } else {
             Err("No User".to_string())
         }

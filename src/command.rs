@@ -11,11 +11,22 @@ pub struct Command {
     pub content: Result<CommandType, String>,
 }
 
+impl Command {
+    pub fn new(from: usize, content: CommandType) -> Command {
+        Command {
+            from,
+            content: Ok(content),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum CommandType {
     Participate(String),
     Leave(String),
     Start,
+    Reset,
+    Finish,
     Bet(String, u32),
     Hit(String),
     Stand(String),
@@ -29,6 +40,31 @@ pub enum CommandType {
     GetDealerHand(bool),
     GetDealerScore,
     GetResult,
+}
+
+impl CommandType {
+    pub fn to_type_string(&self) -> String {
+        match self {
+            CommandType::Participate(_) => "参加".to_string(),
+            CommandType::Leave(_) => "退出".to_string(),
+            CommandType::Start => "ゲームの開始".to_string(),
+            CommandType::Reset => "ゲームのリセット".to_string(),
+            CommandType::Finish => "ゲームの終了".to_string(),
+            CommandType::Bet(_, _) => "ベット".to_string(),
+            CommandType::Hit(_) => "ヒット".to_string(),
+            CommandType::Stand(_) => "スタンド".to_string(),
+            CommandType::Deal => "カードの配布".to_string(),
+            CommandType::DealerHit => "ディーラーのヒット".to_string(),
+            CommandType::GetAmounts => "掛け金の取得".to_string(),
+            CommandType::GetStatus => "ゲーム状況の取得".to_string(),
+            CommandType::GetPlayerName(_) => "プレイヤーの名前の取得".to_string(),
+            CommandType::GetBoard(_) => "ゲーム盤面の取得".to_string(),
+            CommandType::GetPlayerHand(_) => "プレイヤーのハンドの取得".to_string(),
+            CommandType::GetDealerHand(_) => "ディーラーのハンドの取得".to_string(),
+            CommandType::GetDealerScore => "ディーラーのスコアの取得".to_string(),
+            CommandType::GetResult => "ゲーム結果の取得".to_string(),
+        }
+    }
 }
 
 impl FromStr for Command {
@@ -53,6 +89,8 @@ impl FromStr for Command {
                 Ok(CommandType::Leave(name.to_string()))
             }
             Some("/start") => Ok(CommandType::Start),
+            Some("/reset") => Ok(CommandType::Reset),
+            Some("/finish") => Ok(CommandType::Finish),
             Some("/bet") => {
                 let name = iter.next().ok_or("Name not found")?;
                 let amount: u32 = iter
@@ -124,6 +162,8 @@ impl ToString for Command {
             CommandType::Participate(name) => format!("/participate {}", name),
             CommandType::Leave(name) => format!("/leave {}", name),
             CommandType::Start => "/start".to_string(),
+            CommandType::Reset => "/reset".to_string(),
+            CommandType::Finish => "/finish".to_string(),
             CommandType::Bet(name, amount) => format!("/bet {} {}", name, amount),
             CommandType::Hit(name) => format!("/hit {}", name),
             CommandType::Stand(name) => format!("/stand {}", name),
@@ -150,11 +190,43 @@ pub struct CommandResult {
     pub to: usize,
 }
 
+impl CommandResult {
+    pub fn check_result_type(&self, command: CommandType) -> bool {
+        let content = match &self.content {
+            Ok(content) => content,
+            Err(_) => return false,
+        };
+
+        match command {
+            CommandType::Participate(_) => matches!(content, CommandResultType::Participate(_)),
+            CommandType::Leave(_) => matches!(content, CommandResultType::Leave(_)),
+            CommandType::Start => matches!(content, CommandResultType::Start(_)),
+            CommandType::Reset => matches!(content, CommandResultType::Reset(_)),
+            CommandType::Finish => matches!(content, CommandResultType::Finish(_)),
+            CommandType::Bet(_, _) => matches!(content, CommandResultType::Bet(_)),
+            CommandType::Hit(_) => matches!(content, CommandResultType::Hit(_)),
+            CommandType::Stand(_) => matches!(content, CommandResultType::Stand(_)),
+            CommandType::Deal => matches!(content, CommandResultType::Deal(_)),
+            CommandType::DealerHit => matches!(content, CommandResultType::DealerHit(_)),
+            CommandType::GetAmounts => matches!(content, CommandResultType::GetAmounts(_)),
+            CommandType::GetStatus => matches!(content, CommandResultType::GetStatus(_)),
+            CommandType::GetPlayerName(_) => matches!(content, CommandResultType::GetPlayerName(_)),
+            CommandType::GetBoard(_) => matches!(content, CommandResultType::GetBoard(_)),
+            CommandType::GetPlayerHand(_) => matches!(content, CommandResultType::GetPlayerHand(_)),
+            CommandType::GetDealerHand(_) => matches!(content, CommandResultType::GetDealerHand(_)),
+            CommandType::GetDealerScore => matches!(content, CommandResultType::GetDealerScore(_)),
+            CommandType::GetResult => matches!(content, CommandResultType::GetResult(_)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum CommandResultType {
     Participate(String),
     Leave(String),
     Start(()),
+    Reset(()),
+    Finish(()),
     Bet((String, u32)),
     Hit((String, Card)),
     Stand((String, u32)),
@@ -164,7 +236,7 @@ pub enum CommandResultType {
     GetStatus(Status),
     GetPlayerName(String),
     GetBoard(String),
-    GetPlayerHand(String),
+    GetPlayerHand((String, u32)),
     GetDealerHand(String),
     GetDealerScore(u32),
     GetResult(HashMap<String, (u32, i32)>),
@@ -192,6 +264,8 @@ impl FromStr for CommandResult {
                 Ok(CommandResultType::Leave(name.to_string()))
             }
             Some("/start") => Ok(CommandResultType::Start(())),
+            Some("/reset") => Ok(CommandResultType::Reset(())),
+            Some("/finish") => Ok(CommandResultType::Finish(())),
             Some("/bet") => {
                 let mut iter = iter.next().unwrap().split_whitespace();
                 let name = iter.next().ok_or("Name not found")?;
@@ -227,20 +301,22 @@ impl FromStr for CommandResult {
                 Ok(CommandResultType::Deal(dealer_is_blackjack))
             }
             Some("/dealer_hit") => {
-                let card = iter.next().map(Card::from_str).transpose()?;
+                let card = iter.next().and_then(|card| card.parse().ok());
                 Ok(CommandResultType::DealerHit(card))
             }
             Some("/get_amounts") => {
                 let mut amounts = vec![];
-                for pair in iter.next().unwrap().split_whitespace() {
-                    let mut pair_iter = pair.split(':');
-                    let name = pair_iter.next().ok_or("Name not found")?;
-                    let amount = pair_iter
-                        .next()
-                        .ok_or("Amount not found")?
-                        .parse()
-                        .map_err(|e: ParseIntError| e.to_string())?;
-                    amounts.push((name.to_string(), amount));
+                if let Some(amounts_str) = iter.next() {
+                    for pair in amounts_str.split_whitespace() {
+                        let mut pair_iter = pair.split(':');
+                        let name = pair_iter.next().ok_or("Name not found")?;
+                        let amount = pair_iter
+                            .next()
+                            .ok_or("Amount not found")?
+                            .parse()
+                            .map_err(|e: ParseIntError| e.to_string())?;
+                        amounts.push((name.to_string(), amount));
+                    }
                 }
                 Ok(CommandResultType::GetAmounts(amounts))
             }
@@ -257,8 +333,14 @@ impl FromStr for CommandResult {
                 Ok(CommandResultType::GetBoard(board.to_string()))
             }
             Some("/get_player_hand") => {
+                let mut iter = iter.next().ok_or("Hand not found")?.splitn(2, ' ');
+                let score = iter
+                    .next()
+                    .ok_or("Score not found")?
+                    .parse()
+                    .map_err(|e: ParseIntError| e.to_string())?;
                 let hand = iter.next().ok_or("Hand not found")?;
-                Ok(CommandResultType::GetPlayerHand(hand.to_string()))
+                Ok(CommandResultType::GetPlayerHand((hand.to_string(), score)))
             }
             Some("/get_dealer_hand") => {
                 let hand = iter.next().ok_or("Hand not found")?;
@@ -312,6 +394,8 @@ impl ToString for CommandResult {
             CommandResultType::Participate(name) => format!("/participate {}", name),
             CommandResultType::Leave(name) => format!("/leave {}", name),
             CommandResultType::Start(()) => "/start".to_string(),
+            CommandResultType::Reset(()) => "/reset".to_string(),
+            CommandResultType::Finish(()) => "/finish".to_string(),
             CommandResultType::Bet((name, amount)) => format!("/bet {} {}", name, amount),
             CommandResultType::Hit((name, card)) => {
                 let card = card.to_string();
@@ -321,12 +405,10 @@ impl ToString for CommandResult {
             CommandResultType::Deal(dealer_is_blackjack) => {
                 format!("/deal {}", dealer_is_blackjack)
             }
-            CommandResultType::DealerHit(card) => {
-                let card = card
-                    .map(|card| card.to_string())
-                    .unwrap_or("None".to_string());
-                format!("/dealer_hit {}", card)
-            }
+            CommandResultType::DealerHit(card) => match card.map(|card| card.to_string()) {
+                Some(card) => format!("/dealer_hit {}", card),
+                None => "/dealer_hit".to_string(),
+            },
             CommandResultType::GetAmounts(amounts) => {
                 let mut formatted = "/get_amounts".to_string();
                 for (name, amount) in amounts {
@@ -337,7 +419,9 @@ impl ToString for CommandResult {
             CommandResultType::GetStatus(status) => format!("/get_status {}", status.to_string()),
             CommandResultType::GetPlayerName(name) => format!("/get_player_name {}", name),
             CommandResultType::GetBoard(board) => format!("/get_board {}", board),
-            CommandResultType::GetPlayerHand(hand) => format!("/get_player_hand {}", hand),
+            CommandResultType::GetPlayerHand((hand, score)) => {
+                format!("/get_player_hand {} {}", score, hand)
+            }
             CommandResultType::GetDealerHand(hand) => format!("/get_dealer_hand {}", hand),
             CommandResultType::GetDealerScore(score) => format!("/get_dealer_score {}", score),
             CommandResultType::GetResult(result) => {

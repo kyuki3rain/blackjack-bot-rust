@@ -16,6 +16,11 @@ impl Player {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.hands.clear();
+        self.amount = 0;
+    }
+
     pub fn bet(&mut self, amount: u32) {
         self.amount += amount;
     }

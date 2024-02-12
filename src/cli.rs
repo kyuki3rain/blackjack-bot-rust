@@ -1,282 +1,255 @@
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{
-    command::{Command, CommandResult, CommandResultType},
+    command::{Command, CommandResult, CommandResultType, CommandType},
     status::Status,
 };
 
-pub async fn run(tx: Sender<String>, mut rx: Receiver<String>, id: usize) {
+async fn exec(
+    id: usize,
+    content: CommandType,
+    tx: &Sender<String>,
+    rx: &mut Receiver<String>,
+) -> Result<CommandResultType, String> {
+    let type_string = content.to_type_string();
+    let command = Command::new(id, content);
+    tx.send(command.to_string()).await.unwrap();
+    let response = rx.recv().await.unwrap();
+    let result: CommandResult = response.parse().unwrap_or_else(|_| {
+        panic!("{}のパースに失敗しました。", response);
+    });
+    if result.check_result_type(command.content.unwrap()) {
+        Ok(result.content.unwrap())
+    } else {
+        Err(format!("{}に失敗しました。", type_string))
+    }
+}
+
+pub async fn start(
+    tx: &Sender<String>,
+    rx: &mut Receiver<String>,
+    id: usize,
+) -> Result<(), String> {
+    exec(id, CommandType::Reset, tx, rx).await?;
+    println!("次のゲームは15秒後に開始します。掛け金を設定するか、退出してください。");
+    tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+
+    let result = exec(id, CommandType::GetAmounts, tx, rx).await?;
+    if let CommandResultType::GetAmounts(amounts) = result {
+        if amounts.is_empty() {
+            println!("参加者がいません。");
+            exec(id, CommandType::Finish, tx, rx).await?;
+            return Ok(());
+        }
+
+        exec(id, CommandType::Start, tx, rx).await?;
+        println!("ブラックジャックを開始します。");
+        println!("掛け金は以下のようになっています。");
+        for (name, amount) in amounts {
+            println!("{}: {}", name, amount);
+        }
+    };
+
+    println!();
+    println!("カードを配ります。");
+    let result = exec(id, CommandType::Deal, tx, rx).await?;
+    let dealer_is_blackjack = if let CommandResultType::Deal(dealer_is_blackjack) = result {
+        dealer_is_blackjack
+    } else {
+        false
+    };
+
+    let result = exec(id, CommandType::GetBoard(true), tx, rx).await?;
+    if let CommandResultType::GetBoard(board) = result {
+        print!("{}", board);
+    }
+
+    println!();
+    if dealer_is_blackjack {
+        println!("ディーラーがブラックジャックです。");
+        let result = exec(id, CommandType::GetDealerHand(false), tx, rx).await?;
+        if let CommandResultType::GetDealerHand(hand) = result {
+            println!("ディーラー：{}", hand);
+        }
+        exec(id, CommandType::Finish, tx, rx).await?;
+    } else {
+        println!("ディーラーはブラックジャックではありませんでした。");
+        next_or_end(tx, rx, id, tx).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn run(
+    tx: Sender<String>,
+    mut rx: Receiver<String>,
+    id: usize,
+    start_tx: Sender<String>,
+) {
     let input = std::io::stdin();
 
     loop {
         let mut line = String::new();
         input.read_line(&mut line).unwrap();
         let line = line.trim();
-
         if line == "/exit" {
             break;
         }
 
-        let mut iter = line.split_whitespace();
-
-        // Noneならcontinueし、Someなら外して次の処理に進む
-        let content_str = if let Some(content_str) = iter.next() {
-            content_str
-        } else {
-            continue;
-        };
-
-        let name = if let Some(name) = iter.next() {
-            name
-        } else {
-            println!("名前を入力してください。");
-            continue;
-        };
-
-        let content = match content_str {
-            "/participate" => Ok(crate::command::CommandType::Participate(name.to_string())),
-            "/leave" => Ok(crate::command::CommandType::Leave(name.to_string())),
-            "/bet" => {
-                let amount = if let Some(amount_str) = iter.next() {
-                    if let Ok(amount) = amount_str.parse() {
-                        amount
-                    } else {
-                        println!("金額は数字で入力してください。");
-                        continue;
-                    }
-                } else {
-                    println!("金額を入力してください。");
-                    continue;
-                };
-                Ok(crate::command::CommandType::Bet(name.to_string(), amount))
+        match exec(id, CommandType::GetStatus, &tx, &mut rx).await {
+            Ok(CommandResultType::GetStatus(status)) => {
+                if status == Status::End {
+                    start_tx.send("start".to_string()).await.unwrap();
+                }
             }
-            "/hit" => Ok(crate::command::CommandType::Hit(name.to_string())),
-            "/stand" => Ok(crate::command::CommandType::Stand(name.to_string())),
+            Err(e) => {
+                println!("{}", e);
+            }
             _ => {
-                println!("不明なコマンドです。");
-                continue;
+                println!("ゲームの状態の取得に失敗しました。");
             }
-        };
+        }
 
-        let command = Command { content, from: id };
-        tx.send(command.to_string()).await.unwrap();
-        let result_str = rx.recv().await.unwrap();
+        if let Err(e) = exec_user_command(line, id, &tx, &mut rx, &start_tx).await {
+            println!("{}", e);
+        }
+    }
+}
 
-        let result: CommandResult = if let Ok(result) = result_str.parse() {
-            result
-        } else {
-            println!("unexpected result: {}", result_str);
-            continue;
-        };
+async fn exec_user_command(
+    line: &str,
+    id: usize,
+    tx: &Sender<String>,
+    rx: &mut Receiver<String>,
+    start_tx: &Sender<String>,
+) -> Result<(), String> {
+    let mut iter = line.split_whitespace();
 
-        match result.content {
-            Ok(content) => match content {
-                CommandResultType::Participate(name) => {
-                    println!("{}が参加しました。", name);
+    // unwrap or Err
+    let content_str = if let Some(content_str) = iter.next() {
+        content_str
+    } else {
+        return Err("コマンドを入力してください。".to_string());
+    };
+
+    let name = if let Some(name) = iter.next() {
+        name
+    } else {
+        return Err("名前を入力してください。".to_string());
+    };
+
+    let content = match content_str {
+        "/participate" => CommandType::Participate(name.to_string()),
+        "/leave" => CommandType::Leave(name.to_string()),
+        "/bet" => {
+            let amount: u32 = if let Some(amount_str) = iter.next() {
+                if let Ok(amount) = amount_str.parse() {
+                    amount
+                } else {
+                    return Err("金額を入力してください。".to_string());
                 }
-                CommandResultType::Leave(name) => {
-                    println!("{}が退室しました。", name);
+            } else {
+                return Err("金額を入力してください。".to_string());
+            };
+            CommandType::Bet(name.to_string(), amount)
+        }
+        "/hit" => CommandType::Hit(name.to_string()),
+        "/stand" => CommandType::Stand(name.to_string()),
+        _ => return Err("不正なコマンドです。".to_string()),
+    };
+
+    let result = exec(id, content, tx, rx).await?;
+
+    match result {
+        CommandResultType::Participate(name) => println!("{}が参加しました。", name),
+        CommandResultType::Leave(name) => println!("{}が退室しました。", name),
+
+        CommandResultType::Bet((name, amount)) => {
+            println!("{}が{}コイン賭けました。", name, amount)
+        }
+        CommandResultType::Hit((name, card)) => {
+            println!(
+                "{}がヒットしました。引いたカード：{}",
+                name,
+                card.to_string()
+            );
+            let command = CommandType::GetPlayerHand(name.to_string());
+            let result = exec(id, command, tx, rx).await?;
+            if let CommandResultType::GetPlayerHand((hand, score)) = result {
+                println!("{}：{}(score: {})", name, hand, score);
+            } else {
+                println!("プレイヤーの手札の取得に失敗しました。");
+            }
+        }
+        CommandResultType::Stand((name, score)) => {
+            println!("{}がスタンドしました。スコア：{}", name, score);
+            next_or_end(tx, rx, id, start_tx).await?;
+        }
+        e => {
+            println!("unexpected content {:?}", e);
+        }
+    }
+
+    Ok(())
+}
+
+async fn next_or_end(
+    tx: &Sender<String>,
+    rx: &mut Receiver<String>,
+    id: usize,
+    start_tx: &Sender<String>,
+) -> Result<(), String> {
+    loop {
+        let result = exec(id, CommandType::GetStatus, tx, rx).await?;
+
+        if let CommandResultType::GetStatus(status) = result {
+            match status {
+                Status::Playing(player_index) => {
+                    let result = exec(id, CommandType::GetPlayerName(player_index), tx, rx).await?;
+                    if let CommandResultType::GetPlayerName(name) = result {
+                        println!();
+                        let result =
+                            exec(id, CommandType::GetPlayerHand(name.to_owned()), tx, rx).await?;
+                        if let CommandResultType::GetPlayerHand((hand, score)) = result {
+                            println!("{}：{} ({})", name.to_owned(), hand, score);
+                        }
+                        println!("{}さん、コマンドを入力してください。", name);
+                    }
+                    break;
                 }
-                CommandResultType::Bet((name, amount)) => {
-                    println!("{}が{}コイン賭けました。", name, amount);
+                Status::DealerTurn => {
+                    let result = exec(id, CommandType::DealerHit, tx, rx).await?;
+                    if let CommandResultType::DealerHit(_) = result {
+                        let result = exec(id, CommandType::GetDealerHand(false), tx, rx).await?;
+                        if let CommandResultType::GetDealerHand(hand) = result {
+                            println!("ディーラー：{}", hand);
+                        }
+                    }
                 }
-                CommandResultType::Hit((name, card)) => {
-                    println!(
-                        "{}がヒットしました。引いたカード：{}",
-                        name,
-                        card.to_string()
-                    );
-                    show_player_hand(&name, &tx, &mut rx, id).await;
-                }
-                CommandResultType::Stand((name, score)) => {
-                    println!("{}がスタンドしました。スコア：{}", name, score);
-                    next_or_end(&tx, &mut rx, id).await;
+                Status::End => {
+                    let result = exec(id, CommandType::GetDealerScore, tx, rx).await?;
+                    if let CommandResultType::GetDealerScore(score) = result {
+                        println!("ディーラーのスコアは{}でした。", score);
+                    }
+                    println!();
+                    println!("払い戻しは以下のようになります。");
+                    let result = exec(id, CommandType::GetResult, tx, rx).await?;
+                    if let CommandResultType::GetResult(result) = result {
+                        for (name, (amount, diff)) in result {
+                            let diff_operator = if diff > 0 { "+" } else { "" };
+                            println!("{}: {}（{}{}）", name, amount, diff_operator, diff);
+                        }
+                    }
+                    start_tx.send("start".to_string()).await.unwrap();
+                    break;
                 }
                 e => {
-                    println!("unexpected content {:?}", e);
+                    println!("unexpected status {:?}", e);
+                    break;
                 }
-            },
-            Err(_) => todo!(),
-        }
-    }
-}
-
-async fn next_or_end(tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) {
-    loop {
-        match get_satus(tx, rx, id).await {
-            Ok(Status::Playing(player_index)) => {
-                let player_name = get_player_name(player_index, tx, rx, id).await.unwrap();
-                println!();
-                println!("{}さん、コマンドを入力してください。", player_name);
-                break;
-            }
-            Ok(Status::DealerTurn) => {
-                dealer_hit(tx, rx, id).await;
-            }
-            Ok(Status::End) => {
-                get_dealer_score(tx, rx, id).await;
-                println!();
-                println!("払い戻しは以下のようになります。");
-                get_result(tx, rx, id).await;
-                break;
-            }
-            e => {
-                println!("unexpected status {:?}", e);
-                break;
             }
         }
     }
-}
 
-async fn exec(command: Command, tx: &Sender<String>, rx: &mut Receiver<String>) -> CommandResult {
-    tx.send(command.to_string()).await.unwrap();
-    let response = rx.recv().await.unwrap();
-    response.parse().unwrap()
-}
-
-pub async fn start(tx: Sender<String>, mut rx: Receiver<String>, id: usize) {
-    tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
-
-    let content = Ok(crate::command::CommandType::Start);
-    let result = exec(Command { content, from: id }, &tx, &mut rx).await;
-    if let Ok(CommandResultType::Start(_)) = result.content {
-        println!("ブラックジャックを開始します。");
-        println!("掛け金は以下のようになっています。");
-        get_amounts(&tx, &mut rx, id).await;
-        println!();
-        println!("カードを配ります。");
-        let dealer_is_blackjack = deal(&tx, &mut rx, id).await.unwrap();
-        get_board(true, &tx, &mut rx, id).await;
-        println!();
-        if dealer_is_blackjack {
-            println!("ディーラーがブラックジャックです。");
-            show_dealer_hand(false, &tx, &mut rx, id).await;
-        } else {
-            println!("ディーラーはブラックジャックではありませんでした。");
-            next_or_end(&tx, &mut rx, id).await;
-        }
-    } else {
-        println!("開始に失敗しました。");
-    }
-}
-
-async fn get_amounts(tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) {
-    let content = Ok(crate::command::CommandType::GetAmounts);
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetAmounts(amounts)) = result.content {
-        for (name, amount) in amounts {
-            println!("{}: {}", name, amount);
-        }
-    } else {
-        println!("掛け金の取得に失敗しました。");
-    }
-}
-
-async fn get_satus(
-    tx: &Sender<String>,
-    rx: &mut Receiver<String>,
-    id: usize,
-) -> Result<Status, ()> {
-    let content = Ok(crate::command::CommandType::GetStatus);
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetStatus(status)) = result.content {
-        Ok(status)
-    } else {
-        Err(())
-    }
-}
-
-async fn deal(tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) -> Result<bool, ()> {
-    let content = Ok(crate::command::CommandType::Deal);
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::Deal(dealer_is_blackjack)) = result.content {
-        Ok(dealer_is_blackjack)
-    } else {
-        println!("カードの配布に失敗しました。");
-        Err(())
-    }
-}
-
-async fn show_dealer_hand(
-    hide_first: bool,
-    tx: &Sender<String>,
-    rx: &mut Receiver<String>,
-    id: usize,
-) {
-    let content = Ok(crate::command::CommandType::GetDealerHand(hide_first));
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetDealerHand(hand)) = result.content {
-        println!("ディーラー：{}", hand);
-    } else {
-        println!("ディーラーの手札の取得に失敗しました。");
-    }
-}
-
-async fn get_player_name(
-    index: usize,
-    tx: &Sender<String>,
-    rx: &mut Receiver<String>,
-    id: usize,
-) -> Result<String, ()> {
-    let content = Ok(crate::command::CommandType::GetPlayerName(index));
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetPlayerName(name)) = result.content {
-        Ok(name)
-    } else {
-        println!("プレイヤー名の取得に失敗しました。");
-        Err(())
-    }
-}
-
-async fn get_board(hide_first: bool, tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) {
-    let content = Ok(crate::command::CommandType::GetBoard(hide_first));
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetBoard(board)) = result.content {
-        print!("{}", board);
-    } else {
-        println!("ボードの取得に失敗しました。");
-    }
-}
-
-async fn show_player_hand(name: &str, tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) {
-    let content = Ok(crate::command::CommandType::GetPlayerHand(name.to_string()));
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetPlayerHand(hand)) = result.content {
-        println!("{}：{}", name, hand);
-    } else {
-        println!("プレイヤーの手札の取得に失敗しました。");
-    }
-}
-
-async fn dealer_hit(tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) {
-    let content = Ok(crate::command::CommandType::DealerHit);
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::DealerHit(_)) = result.content {
-        show_dealer_hand(false, tx, rx, id).await;
-    } else {
-        println!("ディーラーのヒットに失敗しました。");
-    }
-}
-
-async fn get_dealer_score(tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) {
-    let content = Ok(crate::command::CommandType::GetDealerScore);
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetDealerScore(score)) = result.content {
-        println!("ディーラーのスコアは{}でした。", score);
-    } else {
-        println!("ディーラーのスコアの取得に失敗しました。");
-    }
-}
-
-async fn get_result(tx: &Sender<String>, rx: &mut Receiver<String>, id: usize) {
-    let content = Ok(crate::command::CommandType::GetResult);
-    let result = exec(Command { content, from: id }, tx, rx).await;
-    if let Ok(CommandResultType::GetResult(result)) = result.content {
-        for (name, (amount, diff)) in result {
-            let diff_operator = if diff > 0 { "+" } else { "" };
-            println!("{}: {}（{}{}）", name, amount, diff_operator, diff);
-        }
-    } else {
-        println!("結果の取得に失敗しました。");
-    }
+    Ok(())
 }
