@@ -13,6 +13,13 @@ impl Card {
         Card { suit, value }
     }
 
+    pub fn new_hidden() -> Card {
+        Card {
+            suit: Suit::Hidden,
+            value: Value::Hidden,
+        }
+    }
+
     pub fn get_score(&self, ace_high: bool) -> u32 {
         match self.value {
             Value::Ace => {
@@ -34,6 +41,7 @@ impl Card {
             Value::Jack => 10,
             Value::Queen => 10,
             Value::King => 10,
+            Value::Hidden => 0,
         }
     }
 
@@ -78,6 +86,7 @@ pub enum Suit {
     Heart,
     Diamond,
     Club,
+    Hidden,
 }
 
 impl FromStr for Suit {
@@ -89,6 +98,7 @@ impl FromStr for Suit {
             "H" => Ok(Suit::Heart),
             "D" => Ok(Suit::Diamond),
             "C" => Ok(Suit::Club),
+            "X" => Ok(Suit::Hidden), // "X"は不明なカードを表す
             _ => Err("Invalid suit"),
         }
     }
@@ -101,6 +111,7 @@ impl ToString for Suit {
             Suit::Heart => "H",
             Suit::Diamond => "D",
             Suit::Club => "C",
+            Suit::Hidden => "X",
         }
         .to_string()
     }
@@ -121,6 +132,7 @@ pub enum Value {
     Jack,
     Queen,
     King,
+    Hidden,
 }
 
 impl FromStr for Value {
@@ -141,6 +153,7 @@ impl FromStr for Value {
             "J" => Ok(Value::Jack),
             "Q" => Ok(Value::Queen),
             "K" => Ok(Value::King),
+            "X" => Ok(Value::Hidden), // "X"は不明なカードを表す
             _ => Err("Invalid value"),
         }
     }
@@ -162,6 +175,7 @@ impl ToString for Value {
             Value::Jack => "J",
             Value::Queen => "Q",
             Value::King => "K",
+            Value::Hidden => "X",
         }
         .to_string()
     }

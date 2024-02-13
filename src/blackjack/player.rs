@@ -1,4 +1,4 @@
-use crate::card::Card;
+use crate::blackjack::card::Card;
 
 #[derive(Debug, Clone)]
 pub struct Player {
@@ -23,6 +23,16 @@ impl Player {
 
     pub fn bet(&mut self, amount: u32) {
         self.amount += amount;
+    }
+
+    pub fn get_hands(&self, hide: bool) -> Vec<Card> {
+        if hide {
+            let mut hands = self.hands.clone();
+            hands[1] = Card::new_hidden();
+            hands
+        } else {
+            self.hands.clone()
+        }
     }
 
     pub fn add_card(&mut self, card: Card) {

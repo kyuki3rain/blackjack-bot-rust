@@ -1,36 +1,53 @@
+use std::collections::HashMap;
+
+use blackjack::manager;
+use cli::{
+    display::{self, DISPLAY_ID},
+    input,
+};
+use timer::TIMER_ID;
 use tokio::sync::mpsc::channel;
 
 mod blackjack;
-mod card;
 mod cli;
 mod command;
-mod deck;
-mod game;
-mod player;
-mod status;
+mod dispatcher;
+mod message;
+mod timer;
 
 #[tokio::main]
 async fn main() {
-    let (tx1, rx1) = channel(32);
-    let (tx2, rx2) = channel(32);
-    let (tx3, mut rx3) = channel(32);
+    let (timer_tx, timer_rx) = channel(1);
+    let (manager_tx, manager_rx) = channel(1);
+    let (display_tx, display_rx) = channel(1);
+    let (dispatcher_tx, dispatcher_rx) = channel(1);
 
-    let tx1_clone = tx1.clone();
-    let tx3_clone = tx3.clone();
+    let manager_tx_clone = manager_tx.clone();
 
-    tokio::spawn(async move {
-        loop {
-            let start_command = rx3.recv().await.unwrap();
-            if start_command != "start" {
-                continue;
-            }
-            let _ = cli::start(&tx1_clone, &mut rx3, 1).await;
-        }
+    let mut tx_map = HashMap::new();
+    tx_map.insert(TIMER_ID, timer_tx);
+    tx_map.insert(DISPLAY_ID, display_tx);
+
+    let dispatcher_handle = tokio::spawn(async move {
+        dispatcher::dispatcher(tx_map, dispatcher_rx).await;
     });
 
-    tokio::spawn(async move {
-        game::play(vec![tx2, tx3], rx1).await;
+    let timer_handle = tokio::spawn(async move {
+        timer::timer(manager_tx_clone, timer_rx).await;
     });
 
-    cli::run(tx1, rx2, 0, tx3_clone).await;
+    let display_handle = tokio::spawn(async move {
+        display::display(display_rx).await;
+    });
+
+    let input_listener_handle = tokio::spawn(async move {
+        input::input_listener(manager_tx).await;
+    });
+
+    manager::manager(dispatcher_tx, manager_rx).await;
+
+    timer_handle.abort();
+    input_listener_handle.await.unwrap();
+    dispatcher_handle.await.unwrap();
+    display_handle.await.unwrap();
 }
