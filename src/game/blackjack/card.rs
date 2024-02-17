@@ -57,7 +57,7 @@ impl Card {
 }
 
 impl FromStr for Card {
-    type Err = &'static str;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // 10の場合もあるので、最初の1文字をスートとして取得する
@@ -90,7 +90,7 @@ pub enum Suit {
 }
 
 impl FromStr for Suit {
-    type Err = &'static str;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -99,7 +99,7 @@ impl FromStr for Suit {
             "D" => Ok(Suit::Diamond),
             "C" => Ok(Suit::Club),
             "X" => Ok(Suit::Hidden), // "X"は不明なカードを表す
-            _ => Err("Invalid suit"),
+            _ => Err("Invalid suit".to_string()),
         }
     }
 }
@@ -136,7 +136,7 @@ pub enum Value {
 }
 
 impl FromStr for Value {
-    type Err = &'static str;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -154,7 +154,7 @@ impl FromStr for Value {
             "Q" => Ok(Value::Queen),
             "K" => Ok(Value::King),
             "X" => Ok(Value::Hidden), // "X"は不明なカードを表す
-            _ => Err("Invalid value"),
+            _ => Err("Invalid value".to_string()),
         }
     }
 }

@@ -1,53 +1,52 @@
-use std::collections::HashMap;
-
-use blackjack::manager;
-use cli::{
-    display::{self, DISPLAY_ID},
-    input,
-};
-use timer::TIMER_ID;
 use tokio::sync::mpsc::channel;
 
-mod blackjack;
-mod cli;
-mod command;
-mod dispatcher;
-mod message;
-mod timer;
+mod command_dispatcher;
+mod db;
+mod game;
+mod io;
+mod message_dispatcher;
+mod utils;
 
 #[tokio::main]
 async fn main() {
-    let (timer_tx, timer_rx) = channel(1);
-    let (manager_tx, manager_rx) = channel(1);
-    let (display_tx, display_rx) = channel(1);
-    let (dispatcher_tx, dispatcher_rx) = channel(1);
+    let (input_tx, input_rx) = channel(100);
+    let (output_tx, mut output_rx) = channel(100);
+    let (game_tx, mut game_rx) = channel(100);
+    let (message_tx, message_rx) = channel(100);
 
-    let manager_tx_clone = manager_tx.clone();
-
-    let mut tx_map = HashMap::new();
-    tx_map.insert(TIMER_ID, timer_tx);
-    tx_map.insert(DISPLAY_ID, display_tx);
-
-    let dispatcher_handle = tokio::spawn(async move {
-        dispatcher::dispatcher(tx_map, dispatcher_rx).await;
+    let input_tx_clone = input_tx.clone();
+    let io_handler = tokio::spawn(async move {
+        io::cli::run(&input_tx_clone, &mut output_rx).await.unwrap();
     });
 
-    let timer_handle = tokio::spawn(async move {
-        timer::timer(manager_tx_clone, timer_rx).await;
+    let game_tx_clone = game_tx.clone();
+    let message_tx_clone = message_tx.clone();
+    let command_handler = tokio::spawn(async move {
+        command_dispatcher::run(input_rx, &game_tx_clone, &message_tx_clone)
+            .await
+            .unwrap();
     });
 
-    let display_handle = tokio::spawn(async move {
-        display::display(display_rx).await;
+    let message_tx_clone = message_tx.clone();
+    let game_handler = tokio::spawn(async move {
+        game::blackjack::run(&message_tx_clone, &mut game_rx)
+            .await
+            .unwrap();
     });
 
-    let input_listener_handle = tokio::spawn(async move {
-        input::input_listener(manager_tx).await;
+    let output_tx_clone = output_tx.clone();
+    let message_handler = tokio::spawn(async move {
+        message_dispatcher::run(message_rx, vec![output_tx_clone])
+            .await
+            .unwrap();
     });
 
-    manager::manager(dispatcher_tx, manager_rx).await;
+    let finished_process = tokio::select! {
+        _ = io_handler => "io_handler",
+        _ = command_handler => "command_handler",
+        _ = game_handler => "game_handler",
+        _ = message_handler => "message_handler",
+    };
 
-    timer_handle.abort();
-    input_listener_handle.await.unwrap();
-    dispatcher_handle.await.unwrap();
-    display_handle.await.unwrap();
+    println!("Finished: {}", finished_process);
 }

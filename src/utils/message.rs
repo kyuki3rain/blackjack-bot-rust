@@ -1,21 +1,13 @@
 use std::collections::HashMap;
 
-use crate::blackjack::card::Card;
+use crate::game::blackjack::card::Card;
 
 #[derive(Debug, Clone)]
-pub struct Message {
-    pub to: &'static str,
-    pub data: MessageData,
-}
-
-impl Message {
-    pub fn new(to: &'static str, data: MessageData) -> Self {
-        Self { to, data }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum MessageData {
+pub enum Message {
+    Register(String),
+    Rename((String, String)),
+    Balance((String, i32)),
+    GetBonus((String, i32)),
     Init(u64),
     NoPlayer,
     Start,
@@ -25,7 +17,7 @@ pub enum MessageData {
     ShowPlayerHand((String, Vec<Card>, u32)),
     DealerBlackjack,
     DealerNotBlackjack,
-    WaitCommand(String),
+    WaitPlayer(String),
     PlayerBusted,
     Participate(String),
     Leave(String),
@@ -33,22 +25,29 @@ pub enum MessageData {
     Hit((String, Card)),
     Stand(String),
     DealerScore(u32),
-    Result(HashMap<String, (u32, i32)>),
-    Exit,
+    ShowResult(HashMap<String, (u32, i32)>),
 }
 
-impl ToString for MessageData {
+impl ToString for Message {
     fn to_string(&self) -> String {
         match self {
-            MessageData::Init(time) => {
+            Message::Register(name) => format!("{}を登録しました。", name),
+            Message::Rename((old_name, new_name)) => {
+                format!("{}を{}に変更しました。", old_name, new_name)
+            }
+            Message::Balance((name, balance)) => format!("{}の残高：{}", name, balance),
+            Message::GetBonus((name, amount)) => {
+                format!("{}に{}コインのボーナスを付与しました。", name, amount)
+            }
+            Message::Init(time) => {
                 format!(
                     "次のゲームは{}秒後に開始します。掛け金を設定するか、退出してください。",
                     time
                 )
             }
-            MessageData::NoPlayer => "プレイヤーがいません。".to_string(),
-            MessageData::Start => "ブラックジャックを開始します。".to_string(),
-            MessageData::ShowAmounts(amounts) => {
+            Message::NoPlayer => "プレイヤーがいません。".to_string(),
+            Message::Start => "ブラックジャックを開始します。".to_string(),
+            Message::ShowAmounts(amounts) => {
                 let mut message = "掛け金は以下のようになっています。".to_string();
                 for (name, amount) in amounts {
                     message.push('\n');
@@ -56,8 +55,8 @@ impl ToString for MessageData {
                 }
                 message
             }
-            MessageData::StartDeliver => "カードを配ります。".to_string(),
-            MessageData::ShowDealerHand(hand, score) => {
+            Message::StartDeliver => "カードを配ります。".to_string(),
+            Message::ShowDealerHand(hand, score) => {
                 let hand_str = hand
                     .iter()
                     .map(|c| c.to_string())
@@ -70,7 +69,7 @@ impl ToString for MessageData {
                     format!("ディーラー：{}", hand_str)
                 }
             }
-            MessageData::ShowPlayerHand((name, hand, score)) => {
+            Message::ShowPlayerHand((name, hand, score)) => {
                 let hand_str = hand
                     .iter()
                     .map(|c| c.to_string())
@@ -78,25 +77,25 @@ impl ToString for MessageData {
                     .join(" ");
                 format!("{}：{}(score: {})", name, hand_str, score)
             }
-            MessageData::DealerBlackjack => "ディーラーがブラックジャックです。".to_string(),
-            MessageData::DealerNotBlackjack => {
+            Message::DealerBlackjack => "ディーラーがブラックジャックです。".to_string(),
+            Message::DealerNotBlackjack => {
                 "ディーラーはブラックジャックではありません。".to_string()
             }
-            MessageData::WaitCommand(name) => format!("{}のコマンドを待っています。", name),
-            MessageData::PlayerBusted => "バーストしました。".to_string(),
-            MessageData::Participate(name) => format!("{}が参加しました。", name),
-            MessageData::Leave(name) => format!("{}が退室しました。", name),
-            MessageData::Bet((name, amount)) => format!("{}が{}コイン賭けました。", name, amount),
-            MessageData::Hit((name, card)) => {
+            Message::WaitPlayer(name) => format!("{}のコマンドを待っています。", name),
+            Message::PlayerBusted => "バーストしました。".to_string(),
+            Message::Participate(name) => format!("{}が参加しました。", name),
+            Message::Leave(name) => format!("{}が退室しました。", name),
+            Message::Bet((name, amount)) => format!("{}が{}コイン賭けました。", name, amount),
+            Message::Hit((name, card)) => {
                 format!(
                     "{}がヒットしました。引いたカード：{}",
                     name,
                     card.to_string()
                 )
             }
-            MessageData::Stand(name) => format!("{}がスタンドしました。", name),
-            MessageData::DealerScore(score) => format!("ディーラーのスコア：{}", score),
-            MessageData::Result(results) => {
+            Message::Stand(name) => format!("{}がスタンドしました。", name),
+            Message::DealerScore(score) => format!("ディーラーのスコア：{}", score),
+            Message::ShowResult(results) => {
                 let mut message = "払い戻しは以下のようになります。".to_string();
                 for (name, (amount, diff)) in results {
                     let diff_operator = if *diff > 0 { "+" } else { "" };
@@ -105,7 +104,6 @@ impl ToString for MessageData {
                 }
                 message
             }
-            MessageData::Exit => "ゲームを終了します。".to_string(),
         }
     }
 }

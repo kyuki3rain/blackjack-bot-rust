@@ -1,4 +1,4 @@
-use crate::blackjack::card::{Card, Suit, Value};
+use crate::game::blackjack::card::{Card, Suit, Value};
 use rand::{seq::SliceRandom, thread_rng};
 use strum::IntoEnumIterator;
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::blackjack::{card::Card, deck::Deck, player::Player, status::Status};
+use crate::game::blackjack::{card::Card, deck::Deck, player::Player, status::Status};
 
 pub struct Blackjack {
     deck: Deck,
@@ -22,31 +22,13 @@ impl Blackjack {
             dealer: Player::new("Dealer".to_string()),
             player_map,
             player_order: vec![],
-            status: Status::End,
+            status: Status::Betting,
         }
-    }
-
-    pub fn reset(&mut self) -> Result<(), String> {
-        if self.status != Status::End {
-            return Err("Game already started".to_string());
-        }
-
-        self.deck = Deck::new();
-        self.deck.shuffle();
-
-        self.dealer = Player::new("Dealer".to_string());
-        self.status = Status::Betting;
-
-        for player in self.player_map.values_mut() {
-            player.reset();
-        }
-
-        Ok(())
     }
 
     pub fn finish(&mut self) -> Result<(), String> {
         if self.status != Status::Betting && self.status != Status::Dealing {
-            return Err("Game already started".to_string());
+            return Err("cannot finish. status: ".to_string() + &format!("{:?}", self.status));
         }
         self.status = Status::End;
 
@@ -55,7 +37,7 @@ impl Blackjack {
 
     pub fn add_player(&mut self, name: String) -> Result<String, String> {
         if self.status != Status::Betting && self.status != Status::End {
-            return Err("Game already started".to_string());
+            return Err("cannot add player. status: ".to_string() + &format!("{:?}", self.status));
         }
 
         self.player_map
@@ -67,7 +49,9 @@ impl Blackjack {
 
     pub fn remove_player(&mut self, name: String) -> Result<String, String> {
         if self.status != Status::Betting && self.status != Status::End {
-            return Err("Game already started".to_string());
+            return Err(
+                "cannot remove player. status: ".to_string() + &format!("{:?}", self.status)
+            );
         }
 
         self.player_map.remove(&name);
@@ -78,7 +62,7 @@ impl Blackjack {
 
     pub fn start(&mut self) -> Result<(), String> {
         if self.status != Status::Betting {
-            return Err("Game already started".to_string());
+            return Err("cannot start. status: ".to_string() + &format!("{:?}", self.status));
         }
 
         self.status = Status::Dealing;
@@ -88,7 +72,7 @@ impl Blackjack {
 
     pub fn bet(&mut self, name: String, amount: u32) -> Result<(String, u32), String> {
         if self.status != Status::Betting {
-            return Err("Game already started".to_string());
+            return Err("cannot bet. status: ".to_string() + &format!("{:?}", self.status));
         }
 
         if let Some(player) = self.player_map.get_mut(&name) {
@@ -100,7 +84,7 @@ impl Blackjack {
 
     pub fn deal(&mut self) -> Result<bool, String> {
         if self.status != Status::Dealing {
-            return Err("Game already started".to_string());
+            return Err("cannot deal. status: ".to_string() + &format!("{:?}", self.status));
         }
 
         for _ in 0..2 {

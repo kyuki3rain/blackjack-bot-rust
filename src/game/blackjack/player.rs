@@ -1,4 +1,4 @@
-use crate::blackjack::card::Card;
+use crate::game::blackjack::card::Card;
 
 #[derive(Debug, Clone)]
 pub struct Player {
@@ -14,11 +14,6 @@ impl Player {
             hands: Vec::new(),
             amount: 0,
         }
-    }
-
-    pub fn reset(&mut self) {
-        self.hands.clear();
-        self.amount = 0;
     }
 
     pub fn bet(&mut self, amount: u32) {
@@ -37,19 +32,6 @@ impl Player {
 
     pub fn add_card(&mut self, card: Card) {
         self.hands.push(card);
-    }
-
-    pub fn get_hands_symbol(&self, hide_first: bool) -> String {
-        let mut symbol = String::new();
-        for (i, card) in self.hands.iter().enumerate() {
-            if i == 0 && hide_first {
-                symbol += "XX ";
-            } else {
-                symbol += &card.to_string();
-                symbol += " ";
-            }
-        }
-        symbol
     }
 
     pub fn get_score(&self) -> u32 {

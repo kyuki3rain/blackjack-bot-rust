@@ -11,7 +11,7 @@ pub enum Status {
 
 // FromStrトレイトの実装
 impl FromStr for Status {
-    type Err = &'static str; // エラー時の型
+    type Err = String; // エラー時の型
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -29,7 +29,7 @@ impl FromStr for Status {
                         .map_err(|_| "Playing index is not a number")?;
                     Ok(Status::Playing(index))
                 } else {
-                    Err("Invalid status")
+                    Err("Invalid status".to_owned())
                 }
             }
         }
