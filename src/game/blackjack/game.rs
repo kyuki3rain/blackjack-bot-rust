@@ -26,15 +26,6 @@ impl Blackjack {
         }
     }
 
-    pub fn finish(&mut self) -> Result<(), String> {
-        if self.status != Status::Betting && self.status != Status::Dealing {
-            return Err("cannot finish. status: ".to_string() + &format!("{:?}", self.status));
-        }
-        self.status = Status::End;
-
-        Ok(())
-    }
-
     pub fn add_player(&mut self, name: String) -> Result<String, String> {
         if self.status != Status::Betting && self.status != Status::End {
             return Err("cannot add player. status: ".to_string() + &format!("{:?}", self.status));

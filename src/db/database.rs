@@ -46,20 +46,22 @@ pub async fn get_name(user_id: UserId) -> Result<String, sqlx::Error> {
 pub async fn register(id: UserId, name: String) -> Result<String, sqlx::Error> {
     let conn = establish_connection().await?;
 
-    conn.execute(sqlx::query!(
-        r#"
+    let result = conn
+        .execute(sqlx::query!(
+            r#"
         INSERT INTO blackjack_bot_rust_users (name, balance)
         VALUES ($1, 0)
         "#,
-        name
-    ))
-    .await?;
-
-    let name = get_name_from_db(&conn, id.clone()).await?;
+            name
+        ))
+        .await;
+    if let UserId::Cli(_) = id {
+        return result.map(|_| name);
+    }
 
     if let UserId::Discord(id) = id {
-        let user_id = UserId::Cli(name.clone()).get_from_db(&conn).await?;
-        let discord_id = id.get() as i32;
+        let user_id = UserId::Name(name.clone()).get_from_db(&conn).await?;
+        let discord_id = id;
 
         conn.execute(sqlx::query!(
             r#"
@@ -68,7 +70,8 @@ pub async fn register(id: UserId, name: String) -> Result<String, sqlx::Error> {
             "#,
             user_id,
             discord_id
-        ));
+        ))
+        .await?;
     }
 
     Ok(name)

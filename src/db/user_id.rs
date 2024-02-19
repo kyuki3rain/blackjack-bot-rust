@@ -1,10 +1,8 @@
-use std::num::NonZeroU64;
-
 use sqlx::{Pool, Postgres};
 
 #[derive(Debug, Clone)]
 pub enum UserId {
-    Discord(NonZeroU64),
+    Discord(i32),
     Cli(String),
     Name(String),
 }
@@ -13,7 +11,6 @@ impl UserId {
     pub async fn get_from_db(&self, conn: &Pool<Postgres>) -> Result<i32, sqlx::Error> {
         let user_id = match self {
             UserId::Discord(id) => {
-                let id = id.get() as i32;
                 sqlx::query!(
                     r#"
                     SELECT user_id
@@ -27,7 +24,6 @@ impl UserId {
                 .user_id
             }
             UserId::Cli(name) | UserId::Name(name) => {
-                eprintln!("name: {}", name);
                 sqlx::query!(
                     r#"
                     SELECT id

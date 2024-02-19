@@ -8,7 +8,6 @@ use crate::{
 pub async fn run(mut rx: Receiver<Message>, txs: Vec<Sender<Message>>) -> Result<(), String> {
     loop {
         let message = rx.recv().await.unwrap();
-        eprintln!("message: {:?}", message);
 
         if let Message::ShowResult(result) = &message {
             for (name, (amount, _balance)) in result {

@@ -16,7 +16,6 @@ pub async fn run(tx: &Sender<Message>, rx: &mut Receiver<GameCommand>) -> Result
     let mut players = vec![];
     loop {
         let command = rx.recv().await.unwrap();
-        eprintln!("command: {:?}", command);
         let name = command.user_name;
 
         if let GameCommandData::Participate = &command.data {
@@ -27,8 +26,6 @@ pub async fn run(tx: &Sender<Message>, rx: &mut Receiver<GameCommand>) -> Result
 
         loop {
             let result = manager::manager(tx, rx, players).await.unwrap();
-
-            eprintln!("result: {:?}", result);
 
             players = vec![];
             for (name, _) in result {

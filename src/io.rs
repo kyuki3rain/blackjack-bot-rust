@@ -1,2 +1,2 @@
 pub mod cli;
-mod discord;
+pub mod discord;

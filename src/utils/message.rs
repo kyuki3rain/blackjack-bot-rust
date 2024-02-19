@@ -26,6 +26,7 @@ pub enum Message {
     Stand(String),
     DealerScore(u32),
     ShowResult(HashMap<String, (u32, i32)>),
+    Error(String),
 }
 
 impl ToString for Message {
@@ -104,6 +105,7 @@ impl ToString for Message {
                 }
                 message
             }
+            Message::Error(error) => error.clone(),
         }
     }
 }

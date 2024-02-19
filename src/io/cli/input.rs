@@ -10,7 +10,12 @@ pub async fn run(tx: &Sender<Command>) -> Result<(), io::Error> {
 
     while let Some(line) = lines.next_line().await? {
         let input = line.trim().to_string();
-        let command = parse_input(&input).unwrap();
+        let command = match parse_input(&input) {
+            Ok(command) => command,
+            Err(err) => {
+                continue;
+            }
+        };
 
         if let CommandData::Exit = command.data {
             break;
@@ -26,44 +31,36 @@ pub fn parse_input(input: &str) -> Result<Command, String> {
     let mut iter = input.split_whitespace();
     let command = iter.next().ok_or("Command is missing")?;
     let name = iter.next().ok_or("Name is missing")?.to_string();
+    let user_id = UserId::Cli(name.clone());
 
     match command.to_lowercase().as_str() {
-        "register" => Ok(Command::new(
-            CommandData::Register(name.clone()),
-            UserId::Cli(name),
-        )),
+        "register" => Ok(Command::new(CommandData::Register(name.clone()), user_id)),
         "rename" => {
             let new_name = iter.next().ok_or("Name is missing")?.to_string();
-            Ok(Command::new(
-                CommandData::Rename(name),
-                UserId::Cli(new_name),
-            ))
+            Ok(Command::new(CommandData::Rename(new_name), user_id))
         }
-        "balance" => Ok(Command::new(CommandData::Balance, UserId::Cli(name))),
+        "balance" => Ok(Command::new(CommandData::Balance, user_id)),
         "bonus" => {
             let amount = iter
                 .next()
                 .ok_or("Amount is missing")?
                 .parse()
                 .map_err(|_| "Amount should be a number".to_string())?;
-            Ok(Command::new(
-                CommandData::GetBonus(amount),
-                UserId::Cli(name),
-            ))
+            Ok(Command::new(CommandData::GetBonus(amount), user_id))
         }
-        "participate" => Ok(Command::new(CommandData::Participate, UserId::Cli(name))),
-        "leave" => Ok(Command::new(CommandData::Leave, UserId::Cli(name))),
+        "participate" => Ok(Command::new(CommandData::Participate, user_id)),
+        "leave" => Ok(Command::new(CommandData::Leave, user_id)),
         "bet" => {
             let amount = iter
                 .next()
                 .ok_or("Amount is missing")?
                 .parse()
                 .map_err(|_| "Amount should be a number".to_string())?;
-            Ok(Command::new(CommandData::Bet(amount), UserId::Cli(name)))
+            Ok(Command::new(CommandData::Bet(amount), user_id))
         }
-        "hit" => Ok(Command::new(CommandData::Hit, UserId::Cli(name))),
-        "stand" => Ok(Command::new(CommandData::Stand, UserId::Cli(name))),
-        "exit" => Ok(Command::new(CommandData::Exit, UserId::Cli(name))),
+        "hit" => Ok(Command::new(CommandData::Hit, user_id)),
+        "stand" => Ok(Command::new(CommandData::Stand, user_id)),
+        "exit" => Ok(Command::new(CommandData::Exit, user_id)),
         _ => Err("Unknown command".into()),
     }
 }

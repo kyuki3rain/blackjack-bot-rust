@@ -8,7 +8,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use super::{command::GameCommand, status::Status};
 
-const WAIT_TIME: u64 = 1;
+const WAIT_TIME: u64 = 30;
 
 pub async fn manager(
     tx: &Sender<Message>,
@@ -23,19 +23,15 @@ pub async fn manager(
 
     let (timer_finish_tx, mut timer_finish_rx) = tokio::sync::mpsc::channel(1);
     let timer_handle = tokio::spawn(async move {
-        eprintln!("manager: timer start");
         tokio::time::sleep(tokio::time::Duration::from_secs(WAIT_TIME)).await;
-        eprintln!("manager: timer finish");
         timer_finish_tx.send(WAIT_TIME).await.unwrap();
     });
 
-    eprintln!("manager: send init");
     tx.send(Message::Init(WAIT_TIME)).await.unwrap();
 
     loop {
         let result = tokio::select! {
             Some(command) = rx.recv() => {
-                eprintln!("manager: command: {:?}", command);
                 let user_name = command.user_name;
                 match command.data {
                     GameCommandData::Participate => participate(&mut game, tx, user_name).await,
@@ -46,7 +42,6 @@ pub async fn manager(
                 }
             },
             Some(_) = timer_finish_rx.recv() => {
-                eprintln!("manager: timer finish");
                 start(&mut game, tx).await
             },
         };
@@ -75,7 +70,6 @@ pub async fn manager(
 }
 
 async fn start(game: &mut game::Blackjack, tx: &Sender<Message>) -> Result<(), String> {
-    eprintln!("manager: start");
     let amounts = game.get_amounts();
     if amounts.is_empty() {
         tx.send(Message::NoPlayer).await.unwrap();
@@ -105,9 +99,7 @@ async fn start(game: &mut game::Blackjack, tx: &Sender<Message>) -> Result<(), S
         tx.send(Message::ShowDealerHand(dealer_hand, Some(dealer_score)))
             .await
             .unwrap();
-        eprintln!("manager: dealer blackjack");
         next_or_end(game, tx).await?;
-        eprintln!("manager: next_or_end");
         return Ok(());
     }
 
