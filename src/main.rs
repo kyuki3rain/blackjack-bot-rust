@@ -6,6 +6,7 @@ use database::{
     create_discord_user, create_table, get_balance, get_table_id, get_username_by_discord, UserId,
 };
 use dotenvy::dotenv;
+use serenity::all::ChannelId;
 use serenity::async_trait;
 use serenity::builder::{
     CreateCommand, CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -32,6 +33,7 @@ pub struct Request {
 
 pub struct Handler {
     game_txs: Arc<Mutex<HashMap<i32, tokio::sync::mpsc::Sender<Request>>>>,
+    broadcast_txs: Arc<Mutex<HashMap<i32, tokio::sync::broadcast::Sender<String>>>>,
     conn: Pool<Postgres>,
 }
 
@@ -50,13 +52,16 @@ pub async fn exec_game_command(
 impl Handler {
     async fn register_channel(
         &self,
-        channel_id: u64,
+        http: Arc<serenity::http::Http>,
+        channel_id: ChannelId,
     ) -> Result<CreateInteractionResponseMessage, String> {
-        create_table(&self.conn, channel_id)
+        let channel_id_u64 = channel_id.get();
+
+        create_table(&self.conn, channel_id_u64)
             .await
             .map_err(|_| "登録に失敗しました".to_string())?;
 
-        let table_id = get_table_id(&self.conn, channel_id)
+        let table_id = get_table_id(&self.conn, channel_id_u64)
             .await
             .map_err(|_| "テーブルIDの取得に失敗しました".to_string())?;
         let (game_tx, mut game_rx) = tokio::sync::mpsc::channel(1);
@@ -68,14 +73,41 @@ impl Handler {
             return Err("このチャンネルには既にゲームが登録されています".to_string());
         };
 
+        let (broadcast_tx, _) = tokio::sync::broadcast::channel(1);
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.broadcast_txs.lock().unwrap().entry(table_id)
+        {
+            e.insert(broadcast_tx.clone());
+        } else {
+            return Err("このチャンネルには既にゲームが登録されています".to_string());
+        };
+        {
+            let broadcast_tx = broadcast_tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    let request = game_rx.recv().await.unwrap();
+                    let content = match request.command {
+                        Command::Ping(name) => format!("{} さん、こんにちは", name),
+                    };
+                    let response = Response { content };
+                    request.res_tx.send(response).unwrap();
+
+                    for i in 0..10 {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        broadcast_tx.send(format!("test message: {}", i)).unwrap();
+                    }
+                }
+            });
+        }
+
         tokio::spawn(async move {
+            let mut broadcast_rx = broadcast_tx.subscribe();
             loop {
-                let request = game_rx.recv().await.unwrap();
-                let content = match request.command {
-                    Command::Ping(name) => format!("{} さん、こんにちは", name),
-                };
-                let response = Response { content };
-                request.res_tx.send(response).unwrap();
+                let message = broadcast_rx.recv().await.unwrap();
+                channel_id
+                    .say(&http, format!("broadcast: {}", message))
+                    .await
+                    .unwrap();
             }
         });
 
@@ -140,7 +172,10 @@ impl EventHandler for Handler {
             let channel_id = command.channel_id.get();
 
             let result = match command.data.name.as_str() {
-                "register_channel" => self.register_channel(channel_id).await,
+                "register_channel" => {
+                    self.register_channel(ctx.http.clone(), command.channel_id)
+                        .await
+                }
                 "ping" => self.ping(channel_id, user_id).await,
                 "register" => {
                     let name = &command.data.options.first().unwrap().value;
@@ -201,13 +236,14 @@ async fn main() {
 
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
     let conn = database::establish_connection().await.unwrap();
-    let handler = Handler {
+    let handler = Arc::new(Handler {
         game_txs: Arc::new(Mutex::new(HashMap::new())),
+        broadcast_txs: Arc::new(Mutex::new(HashMap::new())),
         conn,
-    };
+    });
 
     let mut client = serenity::Client::builder(token, GatewayIntents::empty())
-        .event_handler(handler)
+        .event_handler_arc(handler.clone())
         .await
         .expect("Err creating client");
 
