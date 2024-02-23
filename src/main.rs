@@ -6,6 +6,7 @@ use database::{
     create_discord_user, create_table, get_balance, get_table_id, get_username_by_discord, UserId,
 };
 use dotenvy::dotenv;
+use game::{Command, Effect, Request, Response};
 use serenity::all::ChannelId;
 use serenity::async_trait;
 use serenity::builder::{
@@ -14,26 +15,14 @@ use serenity::builder::{
 use serenity::client::{Context, EventHandler};
 use serenity::model::prelude::{CommandOptionType, GatewayIntents, Interaction, Ready};
 use sqlx::{Pool, Postgres};
+use tokio::sync::broadcast;
 
 mod database;
-
-pub enum Command {
-    Ping(String),
-}
-
-#[derive(Debug)]
-pub struct Response {
-    content: String,
-}
-
-pub struct Request {
-    res_tx: tokio::sync::oneshot::Sender<Response>,
-    command: Command,
-}
+mod game;
 
 pub struct Handler {
     game_txs: Arc<Mutex<HashMap<i32, tokio::sync::mpsc::Sender<Request>>>>,
-    broadcast_txs: Arc<Mutex<HashMap<i32, tokio::sync::broadcast::Sender<String>>>>,
+    broadcast_txs: Arc<Mutex<HashMap<i32, tokio::sync::broadcast::Sender<Effect>>>>,
     conn: Pool<Postgres>,
 }
 
@@ -43,7 +32,7 @@ pub async fn exec_game_command(
 ) -> String {
     let (res_tx, res_rx) = tokio::sync::oneshot::channel::<Response>();
 
-    let request = Request { res_tx, command };
+    let request = Request::new(res_tx, command);
 
     game_tx.send(request).await.unwrap();
     res_rx.await.unwrap().content
@@ -64,7 +53,7 @@ impl Handler {
         let table_id = get_table_id(&self.conn, channel_id_u64)
             .await
             .map_err(|_| "テーブルIDの取得に失敗しました".to_string())?;
-        let (game_tx, mut game_rx) = tokio::sync::mpsc::channel(1);
+        let (game_tx, game_rx) = tokio::sync::mpsc::channel(1);
         if let std::collections::hash_map::Entry::Vacant(e) =
             self.game_txs.lock().unwrap().entry(table_id)
         {
@@ -73,7 +62,7 @@ impl Handler {
             return Err("このチャンネルには既にゲームが登録されています".to_string());
         };
 
-        let (broadcast_tx, _) = tokio::sync::broadcast::channel(1);
+        let (broadcast_tx, _) = broadcast::channel(1);
         if let std::collections::hash_map::Entry::Vacant(e) =
             self.broadcast_txs.lock().unwrap().entry(table_id)
         {
@@ -83,29 +72,15 @@ impl Handler {
         };
         {
             let broadcast_tx = broadcast_tx.clone();
-            tokio::spawn(async move {
-                loop {
-                    let request = game_rx.recv().await.unwrap();
-                    let content = match request.command {
-                        Command::Ping(name) => format!("{} さん、こんにちは", name),
-                    };
-                    let response = Response { content };
-                    request.res_tx.send(response).unwrap();
-
-                    for i in 0..10 {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        broadcast_tx.send(format!("test message: {}", i)).unwrap();
-                    }
-                }
-            });
+            tokio::spawn(game::run(game_rx, broadcast_tx.clone()));
         }
 
         tokio::spawn(async move {
             let mut broadcast_rx = broadcast_tx.subscribe();
             loop {
-                let message = broadcast_rx.recv().await.unwrap();
+                let effect = broadcast_rx.recv().await.unwrap();
                 channel_id
-                    .say(&http, format!("broadcast: {}", message))
+                    .say(&http, format!("broadcast: {}", effect.content))
                     .await
                     .unwrap();
             }
