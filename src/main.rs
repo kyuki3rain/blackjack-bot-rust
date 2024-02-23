@@ -2,7 +2,9 @@ use std::env;
 use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
-use database::{create_discord_user, get_balance, get_username_by_discord, UserId};
+use database::{
+    create_discord_user, create_table, get_balance, get_table_id, get_username_by_discord, UserId,
+};
 use dotenvy::dotenv;
 use serenity::async_trait;
 use serenity::builder::{
@@ -29,7 +31,7 @@ pub struct Request {
 }
 
 pub struct Handler {
-    game_txs: Arc<Mutex<HashMap<u64, tokio::sync::mpsc::Sender<Request>>>>,
+    game_txs: Arc<Mutex<HashMap<i32, tokio::sync::mpsc::Sender<Request>>>>,
     conn: Pool<Postgres>,
 }
 
@@ -45,88 +47,114 @@ pub async fn exec_game_command(
     res_rx.await.unwrap().content
 }
 
+impl Handler {
+    async fn register_channel(
+        &self,
+        channel_id: u64,
+    ) -> Result<CreateInteractionResponseMessage, String> {
+        create_table(&self.conn, channel_id)
+            .await
+            .map_err(|_| "登録に失敗しました".to_string())?;
+
+        let table_id = get_table_id(&self.conn, channel_id)
+            .await
+            .map_err(|_| "テーブルIDの取得に失敗しました".to_string())?;
+        let (game_tx, mut game_rx) = tokio::sync::mpsc::channel(1);
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.game_txs.lock().unwrap().entry(table_id)
+        {
+            e.insert(game_tx);
+        } else {
+            return Err("このチャンネルには既にゲームが登録されています".to_string());
+        };
+
+        tokio::spawn(async move {
+            loop {
+                let request = game_rx.recv().await.unwrap();
+                let content = match request.command {
+                    Command::Ping(name) => format!("{} さん、こんにちは", name),
+                };
+                let response = Response { content };
+                request.res_tx.send(response).unwrap();
+            }
+        });
+
+        Ok(CreateInteractionResponseMessage::new()
+            .content("このチャンネルにゲームを登録しました".to_string()))
+    }
+
+    async fn register_user(
+        &self,
+        user_id: u64,
+        name: String,
+    ) -> Result<CreateInteractionResponseMessage, String> {
+        create_discord_user(&self.conn, user_id, name.clone())
+            .await
+            .map_err(|_| "登録に失敗しました".to_string())?;
+
+        Ok(CreateInteractionResponseMessage::new().content(format!("{} さんを登録しました", name)))
+    }
+
+    async fn get_balance(&self, user_id: u64) -> Result<CreateInteractionResponseMessage, String> {
+        let balance = get_balance(&self.conn, UserId::Discord(user_id))
+            .await
+            .map_err(|_| "残高の取得に失敗しました".to_string())?;
+
+        Ok(CreateInteractionResponseMessage::new()
+            .content(format!("残高: {}", balance))
+            .ephemeral(true))
+    }
+
+    async fn ping(
+        &self,
+        channel_id: u64,
+        user_id: u64,
+    ) -> Result<CreateInteractionResponseMessage, String> {
+        let table_id = get_table_id(&self.conn, channel_id)
+            .await
+            .map_err(|_| "テーブルIDの取得に失敗しました".to_string())?;
+
+        let game_tx = self
+            .game_txs
+            .lock()
+            .unwrap()
+            .get(&table_id)
+            .ok_or("このチャンネルにはゲームが登録されていません".to_string())?
+            .clone();
+
+        let name = get_username_by_discord(&self.conn, user_id)
+            .await
+            .map_err(|_| "ユーザーが見つかりませんでした。登録してください。".to_string())?;
+
+        let content = exec_game_command(game_tx, Command::Ping(name)).await;
+
+        Ok(CreateInteractionResponseMessage::new().content(content))
+    }
+}
+
 #[async_trait]
 impl EventHandler for Handler {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::Command(command) = interaction {
             let user_id = command.user.id.get();
-            eprintln!("user_id: {}", user_id);
             let channel_id = command.channel_id.get();
 
-            let data = match command.data.name.as_str() {
-                "new" => {
-                    let (game_tx, mut game_rx) = tokio::sync::mpsc::channel(1);
-                    if let std::collections::hash_map::Entry::Vacant(e) =
-                        self.game_txs.lock().unwrap().entry(channel_id)
-                    {
-                        e.insert(game_tx);
-
-                        tokio::spawn(async move {
-                            loop {
-                                let request = game_rx.recv().await.unwrap();
-                                let content = match request.command {
-                                    Command::Ping(name) => format!("{} さん、こんにちは", name),
-                                };
-                                let response = Response { content };
-                                request.res_tx.send(response).unwrap();
-                            }
-                        });
-                        let content = "このチャンネルにゲームを登録しました".to_string();
-                        CreateInteractionResponseMessage::new().content(content)
-                    } else {
-                        let content = "このチャンネルには既にゲームが登録されています".to_string();
-                        CreateInteractionResponseMessage::new()
-                            .content(content)
-                            .ephemeral(true)
-                    }
-                }
-                "ping" => {
-                    let game_tx = match self.game_txs.lock().unwrap().get(&channel_id) {
-                        Some(game_tx) => Ok(game_tx.clone()),
-                        None => Err("このチャンネルにはゲームが登録されていません".to_string()),
-                    };
-                    match game_tx {
-                        Ok(game_tx) => match get_username_by_discord(&self.conn, user_id).await {
-                            Ok(name) => {
-                                let content = exec_game_command(game_tx, Command::Ping(name)).await;
-                                CreateInteractionResponseMessage::new().content(content)
-                            }
-                            Err(content) => CreateInteractionResponseMessage::new()
-                                .content(content.to_string())
-                                .ephemeral(true),
-                        },
-                        Err(content) => CreateInteractionResponseMessage::new()
-                            .content(content)
-                            .ephemeral(true),
-                    }
-                }
+            let result = match command.data.name.as_str() {
+                "register_channel" => self.register_channel(channel_id).await,
+                "ping" => self.ping(channel_id, user_id).await,
                 "register" => {
                     let name = &command.data.options.first().unwrap().value;
                     let name = name.as_str().unwrap().to_string();
-
-                    let content = match create_discord_user(&self.conn, user_id, name.clone()).await
-                    {
-                        Ok(_) => {
-                            format!("登録しました: {}", name)
-                        }
-                        Err(_) => "登録に失敗しました".to_string(),
-                    };
-
-                    CreateInteractionResponseMessage::new()
-                        .content(content)
-                        .ephemeral(true)
+                    self.register_user(user_id, name).await
                 }
-                "balance" => {
-                    let content = match get_balance(&self.conn, UserId::Discord(user_id)).await {
-                        Ok(balance) => format!("残高: {}", balance),
-                        Err(_) => "残高の取得に失敗しました".to_string(),
-                    };
-                    CreateInteractionResponseMessage::new()
-                        .content(content)
-                        .ephemeral(true)
-                }
-                _ => CreateInteractionResponseMessage::new()
-                    .content("未知のコマンド".to_string())
+                "balance" => self.get_balance(user_id).await,
+                _ => Err("未知のコマンド".to_string()),
+            };
+
+            let data = match result {
+                Ok(content) => content,
+                Err(content) => CreateInteractionResponseMessage::new()
+                    .content(content)
                     .ephemeral(true),
             };
 
@@ -147,7 +175,7 @@ impl EventHandler for Handler {
                 .set_commands(
                     &ctx.http,
                     vec![
-                        CreateCommand::new("new").description("チャンネルを登録"),
+                        CreateCommand::new("register_channel").description("チャンネルを登録"),
                         CreateCommand::new("ping").description("テスト用"),
                         CreateCommand::new("register")
                             .description("登録")

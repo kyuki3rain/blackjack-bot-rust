@@ -143,3 +143,37 @@ pub async fn get_balance(pool: &Pool<Postgres>, user_id: UserId) -> Result<i32, 
 
     Ok(balance)
 }
+
+pub async fn create_table(pool: &Pool<Postgres>, channel_id: u64) -> Result<(), sqlx::Error> {
+    let discord_channel_id = discord_id_to_i64(channel_id);
+
+    sqlx::query!(
+        r#"
+        INSERT INTO blackjack_bot_rust_tables (discord_channel_id)
+        VALUES ($1)
+        "#,
+        discord_channel_id,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn get_table_id(pool: &Pool<Postgres>, channel_id: u64) -> Result<i32, sqlx::Error> {
+    let channel_id = discord_id_to_i64(channel_id);
+
+    let table_id = sqlx::query!(
+        r#"
+        SELECT id
+        FROM blackjack_bot_rust_tables
+        WHERE discord_channel_id = $1
+        "#,
+        channel_id
+    )
+    .fetch_one(pool)
+    .await?
+    .id;
+
+    Ok(table_id)
+}
