@@ -2,14 +2,14 @@ use std::env;
 use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
-use database::{create_discord_user, get_username_by_discord};
+use database::{create_discord_user, get_balance, get_username_by_discord, UserId};
 use dotenvy::dotenv;
 use serenity::async_trait;
 use serenity::builder::{
     CreateCommand, CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 use serenity::client::{Context, EventHandler};
-use serenity::model::prelude::{CommandOptionType, GatewayIntents, GuildId, Interaction, Ready};
+use serenity::model::prelude::{CommandOptionType, GatewayIntents, Interaction, Ready};
 use sqlx::{Pool, Postgres};
 
 mod database;
@@ -102,15 +102,25 @@ impl EventHandler for Handler {
                 }
                 "register" => {
                     let name = &command.data.options.first().unwrap().value;
-                    let name = name.as_str().unwrap();
+                    let name = name.as_str().unwrap().to_string();
 
-                    let content = match create_discord_user(&self.conn, user_id, name).await {
+                    let content = match create_discord_user(&self.conn, user_id, name.clone()).await
+                    {
                         Ok(_) => {
                             format!("登録しました: {}", name)
                         }
                         Err(_) => "登録に失敗しました".to_string(),
                     };
 
+                    CreateInteractionResponseMessage::new()
+                        .content(content)
+                        .ephemeral(true)
+                }
+                "balance" => {
+                    let content = match get_balance(&self.conn, UserId::Discord(user_id)).await {
+                        Ok(balance) => format!("残高: {}", balance),
+                        Err(_) => "残高の取得に失敗しました".to_string(),
+                    };
                     CreateInteractionResponseMessage::new()
                         .content(content)
                         .ephemeral(true)
@@ -145,6 +155,7 @@ impl EventHandler for Handler {
                                 CreateCommandOption::new(CommandOptionType::String, "name", "名前")
                                     .required(true),
                             ),
+                        CreateCommand::new("balance").description("残高"),
                     ],
                 )
                 .await;
