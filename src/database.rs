@@ -160,6 +160,20 @@ pub async fn create_table(pool: &Pool<Postgres>, channel_id: u64) -> Result<(), 
     Ok(())
 }
 
+pub async fn delete_table(pool: &Pool<Postgres>, table_id: i32) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        DELETE FROM blackjack_bot_rust_tables
+        WHERE id = $1
+        "#,
+        table_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn get_table_id(pool: &Pool<Postgres>, channel_id: u64) -> Result<i32, sqlx::Error> {
     let channel_id = discord_id_to_i64(channel_id);
 
@@ -176,4 +190,44 @@ pub async fn get_table_id(pool: &Pool<Postgres>, channel_id: u64) -> Result<i32,
     .id;
 
     Ok(table_id)
+}
+
+pub async fn bet(pool: &Pool<Postgres>, user_id: UserId, amount: i32) -> Result<(), sqlx::Error> {
+    let user_id = user_id.get_user_id(pool).await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE blackjack_bot_rust_users
+        SET balance = balance - $1
+        WHERE id = $2
+        "#,
+        amount,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn save_result(
+    pool: &Pool<Postgres>,
+    user_id: UserId,
+    amount: i32,
+) -> Result<(), sqlx::Error> {
+    let user_id = user_id.get_user_id(pool).await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE blackjack_bot_rust_users
+        SET balance = balance + $1
+        WHERE id = $2
+        "#,
+        amount,
+        user_id
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
