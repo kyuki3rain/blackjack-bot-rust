@@ -3,8 +3,8 @@ use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
 use database::{
-    bet, create_discord_user, create_table, delete_table, get_balance, get_table_id,
-    get_username_by_discord, UserId,
+    bet, create_bonus, create_discord_user, create_table, delete_table, get_balance, get_bonus,
+    get_table_id, get_username_by_discord, UserId,
 };
 use dotenvy::dotenv;
 use game::state::{self, Effect};
@@ -400,6 +400,32 @@ impl Handler {
 
         Ok(CreateInteractionResponseMessage::new().content(content))
     }
+
+    async fn create_bonus(&self, amount: i32) -> Result<CreateInteractionResponseMessage, String> {
+        let result = create_bonus(&self.conn, amount).await;
+
+        match result {
+            Ok(id) => Ok(CreateInteractionResponseMessage::new()
+                .content(format!("ボーナスを追加しました。id: {}", id))
+                .ephemeral(true)),
+            Err(_) => Err("ボーナスの追加に失敗しました".to_string()),
+        }
+    }
+
+    async fn get_bonus(
+        &self,
+        user_id: u64,
+        bonus_id: i32,
+    ) -> Result<CreateInteractionResponseMessage, String> {
+        let user_id = UserId::Discord(user_id);
+        let result = get_bonus(&self.conn, user_id, bonus_id).await;
+
+        match result {
+            Ok(amount) => Ok(CreateInteractionResponseMessage::new()
+                .content(format!("{}コインのボーナスを取得しました", amount))),
+            Err(_) => Err("ボーナスの取得に失敗しました".to_string()),
+        }
+    }
 }
 
 #[async_trait]
@@ -427,6 +453,16 @@ impl EventHandler for Handler {
                 }
                 "hit" => self.hit(channel_id, user_id).await,
                 "stand" => self.stand(channel_id, user_id).await,
+                "create_bonus" => {
+                    let amount = &command.data.options.first().unwrap().value;
+                    let amount = amount.as_i64().unwrap();
+                    self.create_bonus(amount as i32).await
+                }
+                "get_bonus" => {
+                    let bonus_id = &command.data.options.first().unwrap().value;
+                    let bonus_id = bonus_id.as_i64().unwrap();
+                    self.get_bonus(user_id, bonus_id as i32).await
+                }
                 _ => Err("未知のコマンド".to_string()),
             };
 
@@ -471,6 +507,22 @@ impl EventHandler for Handler {
                         ),
                         CreateCommand::new("hit").description("ヒット"),
                         CreateCommand::new("stand").description("スタンド"),
+                        CreateCommand::new("create_bonus")
+                            .description("ボーナス追加")
+                            .add_option(
+                                CreateCommandOption::new(
+                                    CommandOptionType::Integer,
+                                    "amount",
+                                    "金額",
+                                )
+                                .required(true),
+                            ),
+                        CreateCommand::new("get_bonus")
+                            .description("ボーナス取得")
+                            .add_option(
+                                CreateCommandOption::new(CommandOptionType::Integer, "id", "ID")
+                                    .required(true),
+                            ),
                     ],
                 )
                 .await;

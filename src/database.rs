@@ -231,3 +231,78 @@ pub async fn save_result(
 
     Ok(())
 }
+
+pub async fn create_bonus(pool: &Pool<Postgres>, amount: i32) -> Result<i32, sqlx::Error> {
+    sqlx::query!(
+        r#"
+        INSERT INTO blackjack_bot_rust_bonuses (amount)
+        VALUES ($1)
+        "#,
+        amount,
+    )
+    .execute(pool)
+    .await?;
+
+    let id = sqlx::query!(
+        r#"
+        SELECT id
+        FROM blackjack_bot_rust_bonuses
+        WHERE amount = $1
+        "#,
+        amount,
+    )
+    .fetch_one(pool)
+    .await?
+    .id;
+
+    Ok(id)
+}
+
+pub async fn get_bonus(
+    pool: &Pool<Postgres>,
+    user_id: UserId,
+    bonus_id: i32,
+) -> Result<i32, sqlx::Error> {
+    let user_id = user_id.get_user_id(pool).await?;
+
+    sqlx::query!(
+        r#"
+        INSERT INTO blackjack_bot_rust_user_bonuses (user_id, bonus_id)
+        VALUES ($1, $2)
+        "#,
+        user_id,
+        bonus_id,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE blackjack_bot_rust_users
+        SET balance = balance + (
+            SELECT amount
+            FROM blackjack_bot_rust_bonuses
+            WHERE id = $1
+        )
+        WHERE id = $2
+        "#,
+        bonus_id,
+        user_id,
+    )
+    .execute(pool)
+    .await?;
+
+    let amount = sqlx::query!(
+        r#"
+        SELECT amount
+        FROM blackjack_bot_rust_bonuses
+        WHERE id = $1
+        "#,
+        bonus_id,
+    )
+    .fetch_one(pool)
+    .await?
+    .amount;
+
+    Ok(amount)
+}
